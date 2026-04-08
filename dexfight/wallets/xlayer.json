@@ -1,0 +1,6 @@
+{
+  "wallet_address": "YOUR_WALLET_ADDRESS",
+  "private_key": "YOUR_PRIVATE_KEY",
+  "amount": 100,
+  "min_gap": 0.01
+}

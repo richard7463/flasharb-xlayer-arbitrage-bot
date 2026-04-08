@@ -1,0 +1,11 @@
+{
+  "chain": "xlayer",
+  "input": null,
+  "output": "WIF",
+  "routing": null,
+  "min_gap": 0.01,
+  "min_liquidity": 10000,
+  "timeout": 30,
+  "daemon": true,
+  "dexes": "uniswap_v3,sushiswap,pancakeswap,okx"
+}
