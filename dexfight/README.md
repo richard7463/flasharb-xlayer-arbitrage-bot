@@ -63,6 +63,33 @@ Edit `config.json`:
 - `AMOUNT`: Trade amount in USDC
 - `MIN_GAP`: Minimum spread (e.g., 0.01 = 1%)
 
+## Moltbook Agent Claim Link
+
+Moltbook 验证流程需要先注册 agent 并返回 claim link，再由人类发 X 推文完成 ownership verify。
+
+```bash
+cd dexfight
+python moltbook_register.py --name FlashArb --owner-x your_x_handle
+```
+
+脚本会输出:
+- 注册返回原始 JSON
+- 自动提取的 `claim_link`
+- 可直接复制的 X 验证推文模板
+
+## Moltbook Real Posting
+
+`moltbook_poster.py` 已接入 Moltbook 官方 API:
+- `GET /api/v1/agents/status` (发帖前检查 `claimed`)
+- `POST /api/v1/posts` (发布帖子到 `buildx`)
+- `POST /api/v1/verify` (自动完成 challenge 验证)
+
+示例:
+```bash
+cd dexfight
+MOLTBOOK_API_KEY=your_key MOLTBOOK_PROXY=http://127.0.0.1:7890 python moltbook_poster.py
+```
+
 ## OKX Skills Integration
 
 This project uses OKX Onchain OS Skills:
