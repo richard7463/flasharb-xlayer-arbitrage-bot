@@ -268,7 +268,7 @@ class MOLTBOOKPoster:
             stats: {"total_trades": 10, "profit": 0.5, ...}
             status: running/stopped
         """
-        title = f"DexFight X Layer Update | trades={stats.get('total_trades', 0)} | status={status}"
+        title = f"FlashArb X Layer Update | trades={stats.get('total_trades', 0)} | status={status}"
         content = self._format_update(stats, status)
         return self._create_post(title=title, content=content)
 
@@ -280,16 +280,18 @@ class MOLTBOOKPoster:
             repo_url: GitHub repo URL
             wallet: 钱包地址
         """
-        title = "ProjectSubmission XLayerArena - DexFight X Layer Arbitrage Bot"
+        title = "ProjectSubmission XLayerArena - FlashArb Moltbook-Native Arbitrage Agent"
         content = self._format_submission(repo_url, wallet)
         return self._create_post(title=title, content=content)
 
     def _format_update(self, stats: dict, status: str) -> str:
         """格式化更新内容"""
         return f"""
-## DexFight X Layer - Live Update
+## FlashArb X Layer - Live Update
 
 **Wallet:** `{stats.get('wallet', 'N/A')}`
+**Base Asset:** `{stats.get('base_token', 'N/A')}`
+**Cycles:** {stats.get('cycles', 0)}
 **Total Trades:** {stats.get('total_trades', 0)}
 **Total Profit:** ${stats.get('total_profit', 0):.4f}
 **Average Profit/Trade:** ${stats.get('avg_profit', 0):.4f}
@@ -310,16 +312,13 @@ _Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
     def _format_submission(self, repo_url: str, wallet: str) -> str:
         """格式化项目提交"""
         return f"""
-## ProjectSubmission XLayerArena - DexFight X Layer Arbitrage Bot
-
-**Forked from:** dexfight
-**Adapted for:** X Layer
+## ProjectSubmission XLayerArena - FlashArb Moltbook-Native Arbitrage Agent
 
 ### Features
 - Multi-DEX: Uniswap V3, Sushiswap, Pancakeswap, OKX
 - Price impact calculation
-- Smart execution with gap filtering
-- Mock mode for testing
+- Agentic Wallet execution support
+- Automatic Moltbook updates with tx proof
 
 ### OKX Skills
 - okx-dex-market
@@ -348,7 +347,7 @@ def add_moltbook_posting(bot, post_interval: int = 300):
 
     # 启动时发帖
     result = poster.submit_project(
-        repo_url="https://github.com/YOUR_USERNAME/xlayer-arbitrage-bot",
+        repo_url=os.getenv("FLASHARB_REPO_URL", "https://github.com/YOUR_USERNAME/flasharb"),
         wallet=bot.config.get("WALLET_ADDRESS", "")
     )
     print(f"📱 MOLTBOOK submit result: {result}")

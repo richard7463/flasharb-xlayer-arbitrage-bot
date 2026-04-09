@@ -1,116 +1,162 @@
-# DexFight X Layer - Arbitrage Bot
+# FlashArb - Moltbook-Native X Layer Arbitrage Agent
 
-AI-powered cross-DEX arbitrage trading agent for X Layer.
+FlashArb is an X Layer trading agent for the OKX Build X hackathon. The runtime now uses the official OKX Onchain OS DEX API for:
+- live token discovery
+- live liquidity-source discovery
+- per-DEX quote scanning
+- approval + swap transaction generation
+- Moltbook status posting
+- Agentic Wallet execution when no private key is provided
 
-Forked from [dexfight](https://github.com/0xfffangel/dexfight) and adapted for X Layer network with OKX Onchain OS Skills integration.
+The old `bot.py` / `monitor.py` / `trade.py` flow is still in the repo as legacy code from the original `dexfight` fork. The current entrypoint for the hackathon agent is [`run.py`](./run.py).
 
-## Features
+## What Changed
 
-- **Multi-DEX Support**: Uniswap V3, Sushiswap, Pancakeswap, OKX DEX
-- **Price Impact Calculation**: Based on AMM constant product formula
-- **Smart Trade Execution**: Buy low → Sell high with gap filtering
-- **X Layer Native**: Built for X Layer (Chain ID: 196)
-- **CSV Logging**: Track all opportunities and trades
+The original project had three blocking problems for the agent track:
+- `run.py --real` only printed `Would execute ...`
+- `skills_xlayer.py` returned `status=simulated`
+- `web3dex.py` used mock reserves
 
-## Architecture
+The current runtime fixes the first two by moving scanning and execution onto the official OKX DEX endpoints. `web3dex.py` remains only for the older legacy path.
 
-```
-dexfight/
-├── config_xlayer.py    # X Layer chain configuration
-├── web3dex.py        # DEX interface library
-├── monitor.py        # Price monitoring + opportunity discovery
-├── trade.py         # Trade execution + price impact
-├── bot.py           # Main controller
-└── config.json     # Configuration
-```
+## Runtime Model
 
-## Quick Start
+`run.py` now behaves like a real agent loop:
+1. Resolve supported X Layer tokens from Onchain OS
+2. Auto-select the strongest funded stable base asset, prioritizing `USD₮0 -> USDC -> USDT`
+3. Resolve available liquidity sources such as CurveNG, OkieStableSwap, Uniswap V3, QuickSwap V3, and Revoswap V3
+4. Quote `stable -> token` on one DEX and `token -> stable` on another DEX
+5. Rank opportunities by estimated net profit after quote fees
+6. In `paper` mode: log and post results only
+7. In `live` mode:
+   - `private-key` backend signs directly through RPC
+   - `agentic` backend executes through `onchainos swap execute`
+8. If no spread clears thresholds, optional `idle probe` can still execute a tiny round-trip for tx proof and health checks
+9. Post updates to Moltbook with recent tx hashes
+
+## Install
 
 ```bash
-# Install dependencies
+cd dexfight
 pip install -r requirements.txt
-
-# Configure wallet (edit wallets/xlayer.json with your private key)
-echo '{"wallet_address":"0x...","private_key":"0x...","amount":100,"min_gap":0.01}' > wallets/xlayer.json
-
-# Run once
-python bot.py --once -t WIF
-
-# Run daemon
-python bot.py --daemon -t WIF
+cp .env.example .env
 ```
 
-## Configuration
+## Required Environment Variables
 
-Edit `config.json`:
-```json
-{
-  "chain": "xlayer",
-  "input": null,
-  "output": "WIF",
-  "min_gap": 0.01,
-  "min_liquidity": 10000,
-  "timeout": 30,
-  "daemon": true,
-  "dexes": "uniswap_v3,sushiswap,pancakeswap,okx"
-}
+```dotenv
+ONCHAINOS_API_KEY=...
+ONCHAINOS_API_SECRET=...
+ONCHAINOS_API_PASSPHRASE=...
+WALLET_ADDRESS=0x...
 ```
 
-## Environment Variables
+Optional but recommended:
 
-- `PRIVATE_KEY`: Wallet private key
-- `WALLET_ADDRESS`: Wallet address
-- `AMOUNT`: Trade amount in USDC
-- `MIN_GAP`: Minimum spread (e.g., 0.01 = 1%)
+```dotenv
+FLASHARB_EXECUTION_BACKEND=agentic
+FLASHARB_BASE_TOKEN=auto
+FLASHARB_BASE_TOKENS=USDT0,USDC,USDT
+RPC_URL=https://rpc.xlayer.com
+PRIVATE_KEY=0x... # only needed for private-key backend
+MOLTBOOK_API_KEY=...
+MOLTBOOK_PROXY=http://127.0.0.1:7890
+FLASHARB_TOKENS=USDC,DAI,CRVUSD,OKB,WBTC
+FLASHARB_DEXES=curve,okie-stable,uniswap-v3,quickswap-v3,revoswap-v3
+TRADE_AMOUNT_USD=1
+FLASHARB_MIN_PROFIT_USD=0.05
+FLASHARB_MIN_SPREAD_PCT=0.30
+FLASHARB_IDLE_PROBE_ENABLED=true
+FLASHARB_IDLE_PROBE_TOKEN=OKB
+FLASHARB_IDLE_PROBE_AMOUNT_USD=0.10
+FLASHARB_IDLE_PROBE_INTERVAL=900
+MOLTBOOK_POST_INTERVAL=180
+```
 
-## Moltbook Agent Claim Link
+## Run
 
-Moltbook 验证流程需要先注册 agent 并返回 claim link，再由人类发 X 推文完成 ownership verify。
+Paper mode, one cycle:
 
 ```bash
-cd dexfight
-python moltbook_register.py --name FlashArb --owner-x your_x_handle
+python3 run.py --once
 ```
 
-脚本会输出:
-- 注册返回原始 JSON
-- 自动提取的 `claim_link`
-- 可直接复制的 X 验证推文模板
+Paper mode, continuous:
 
-## Moltbook Real Posting
-
-`moltbook_poster.py` 已接入 Moltbook 官方 API:
-- `GET /api/v1/agents/status` (发帖前检查 `claimed`)
-- `POST /api/v1/posts` (发布帖子到 `buildx`)
-- `POST /api/v1/verify` (自动完成 challenge 验证)
-
-示例:
 ```bash
-cd dexfight
-MOLTBOOK_API_KEY=your_key MOLTBOOK_PROXY=http://127.0.0.1:7890 python moltbook_poster.py
+python3 run.py
 ```
 
-## OKX Skills Integration
+Live mode, real approvals and swaps:
 
-This project uses OKX Onchain OS Skills:
-- `okx-dex-market`: Multi-DEX price monitoring
-- `okx-dex-swap`: Token swap execution
-- `okx-security`: Pre-trade security scanning
-- `okx-wallet-portfolio`: Balance management
+```bash
+python3 run.py --live
+```
 
-## Chain Info
+If you use Agentic Wallet instead of a raw private key:
 
-- **Network**: X Layer
-- **Chain ID**: 196 (mainnet)
-- **RPC**: https://rpc.xlayer.com
-- **Explorer**: https://www.okx.com/explorer/xlayer
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+onchainos wallet status
+```
 
-## License
+The wallet must already be logged in before `--live` mode starts.
 
-MIT
+## Moltbook
 
-## Credits
+Register and claim the agent first:
 
-- Original dexfight: https://github.com/0xfffangel/dexfight
-- X Layer: https://xlayer.com
-- OKX: https://okx.com
+```bash
+python3 moltbook_register.py --name FlashArb --owner-x your_x_handle
+```
+
+Post manually or let the runtime post periodic updates:
+
+```bash
+MOLTBOOK_API_KEY=your_key MOLTBOOK_PROXY=http://127.0.0.1:7890 python3 moltbook_poster.py
+```
+
+`run.py` automatically calls `moltbook_poster.py` logic when `MOLTBOOK_API_KEY` is configured.
+
+## Logs
+
+The runtime writes structured events to:
+
+```text
+logs/flasharb_events.jsonl
+```
+
+That file is useful for:
+- tx proof collection
+- Moltbook update summaries
+- demo video narration
+- judging evidence
+
+## Agent-Track Positioning
+
+FlashArb should be positioned as a **Moltbook-native execution agent**, not just a background bot:
+- it scans live X Layer liquidity via Onchain OS
+- it can execute real approvals and swaps
+- it can execute through Agentic Wallet, which fits the hackathon's required onchain identity model
+- it persists an audit trail
+- it can post its own state back to Moltbook
+
+For the hackathon, this makes it much stronger for `Most active agent` than the earlier mock version.
+
+## Open-Source References
+
+Strong public references worth studying:
+- [AgentHedge](https://github.com/anilkaracay/AgentHedge)
+- [TriMind Agent](https://github.com/satoshinakamoto666666/trimind-agent)
+- [xlayer-agentic-vault](https://github.com/pablomg-dev/xlayer-agentic-vault)
+- [xlayer-defi-agent](https://github.com/Batman0506/xlayer-defi-agent)
+- [official OKX Build X agent skill](https://github.com/okx/plugin-store/tree/main/skills/okx-buildx-hackathon-agent-track)
+- [Moltbook skill](https://www.moltbook.com/skill.md)
+
+## Known Limits
+
+This is now execution-ready plumbing, but not yet a finished champion build:
+- it still needs a hardened deployment target for 24/7 operation
+- it does not yet ingest Moltbook mentions as trading commands
+- it assumes your OKX API credentials, Agentic Wallet session, and token universe are valid on X Layer
+- the legacy `web3dex.py` path is still in the repo and should not be treated as the main runtime
