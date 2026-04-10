@@ -80,6 +80,8 @@ class FlashArbConfig:
     idle_probe_interval: int = 900
     idle_probe_token: str = "OKB"
     rate_limit_cooldown_sec: int = 180
+    agentic_order_retry_count: int = 5
+    agentic_order_retry_delay_sec: int = 8
     single_route_only: bool = True
     single_pool_per_hop: bool = True
     gas_limit_multiplier: Decimal = Decimal("1.30")
@@ -120,6 +122,8 @@ class FlashArbConfig:
             idle_probe_interval=int(os.getenv("FLASHARB_IDLE_PROBE_INTERVAL", "900")),
             idle_probe_token=os.getenv("FLASHARB_IDLE_PROBE_TOKEN", "OKB"),
             rate_limit_cooldown_sec=int(os.getenv("FLASHARB_RATE_LIMIT_COOLDOWN_SEC", "180")),
+            agentic_order_retry_count=int(os.getenv("FLASHARB_AGENTIC_ORDER_RETRY_COUNT", "5")),
+            agentic_order_retry_delay_sec=int(os.getenv("FLASHARB_AGENTIC_ORDER_RETRY_DELAY_SEC", "8")),
             single_route_only=os.getenv("FLASHARB_SINGLE_ROUTE_ONLY", "true").lower() == "true",
             single_pool_per_hop=os.getenv("FLASHARB_SINGLE_POOL_PER_HOP", "true").lower() == "true",
             gas_limit_multiplier=Decimal(os.getenv("FLASHARB_GAS_LIMIT_MULTIPLIER", "1.30")),
@@ -297,6 +301,10 @@ class FlashArbBot:
         message = str(exc).lower()
         return "429" in message or "rate limit" in message or "too many requests" in message
 
+    def _is_agentic_order_busy_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "another order processing" in message or "send-uop failed" in message
+
     def _trim_recent(self) -> None:
         cutoff = time.time() - 3600
         self.recent_trade_times = [ts for ts in self.recent_trade_times if ts >= cutoff]
@@ -442,10 +450,32 @@ class FlashArbBot:
             args.extend(["--readable-amount", amount_str])
         else:
             raise RuntimeError("Swap execution requires readable_amount or raw_amount")
-        response = self._run_onchainos_cli(args)
-        if not response.get("ok"):
-            raise RuntimeError(f"Agentic swap failed: {response}")
-        return response["data"]
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.config.agentic_order_retry_count + 1):
+            try:
+                response = self._run_onchainos_cli(args)
+                if not response.get("ok"):
+                    raise RuntimeError(f"Agentic swap failed: {response}")
+                return response["data"]
+            except Exception as exc:
+                last_error = exc
+                if attempt >= self.config.agentic_order_retry_count or not self._is_agentic_order_busy_error(exc):
+                    raise
+                self._record_event(
+                    "agentic_order_retry",
+                    {
+                        "attempt": attempt,
+                        "max_attempts": self.config.agentic_order_retry_count,
+                        "delay_sec": self.config.agentic_order_retry_delay_sec,
+                        "from_token": from_token.symbol,
+                        "to_token": to_token.symbol,
+                        "error": str(exc),
+                    },
+                )
+                time.sleep(self.config.agentic_order_retry_delay_sec)
+        if last_error:
+            raise last_error
+        raise RuntimeError("Agentic swap failed without a specific error")
 
     def _quote(self, amount: str, from_token: TokenInfo, to_token: TokenInfo, dex_id: str) -> Dict[str, Any]:
         return self.client.quote(
@@ -697,32 +727,43 @@ class FlashArbBot:
         self._record_event("moltbook_post", result)
         self.last_post_at = now
 
+    def _run_probe_cycle(self, *, reason: str) -> Dict[str, Any]:
+        probe_token = next((item for item in self.target_tokens if item.symbol == self.config.idle_probe_token), self.target_tokens[0])
+        probe_opportunity = {
+            "token": probe_token.symbol,
+            "buy_dex": "aggregator",
+            "sell_dex": "aggregator",
+            "reason": reason,
+        }
+        try:
+            probe_execution = self._execute_roundtrip(probe_token, self.config.idle_probe_amount_usd, label="probe")
+        except Exception as exc:
+            probe_execution = {"status": "failed", "error": str(exc), "profit_usd": "0", "label": "probe"}
+            self._record_event("cycle_probe_error", {"opportunity": probe_opportunity, "error": str(exc)})
+        self._update_stats(probe_opportunity, probe_execution)
+        outcome = {"opportunity": probe_opportunity, "execution": probe_execution}
+        self._record_event("cycle_probe", outcome)
+        return outcome
+
     def run_cycle(self) -> Dict[str, Any]:
         self.state["cycles"] += 1
         if time.time() < self.rate_limited_until:
+            if self._probe_allowed():
+                return self._run_probe_cycle(reason="rate_limited_cooldown")
             remaining = max(1, int(self.rate_limited_until - time.time()))
             result = {"status": "rate_limited", "message": f"Cooling down for {remaining}s after OKX API 429"}
             self._record_event("cycle_rate_limited", result)
             return result
         opportunity = self.scan_best_opportunity()
         if not opportunity:
+            if self._probe_allowed():
+                reason = "rate_limited_after_scan" if time.time() < self.rate_limited_until else "no_opportunity"
+                return self._run_probe_cycle(reason=reason)
             if time.time() < self.rate_limited_until:
                 remaining = max(1, int(self.rate_limited_until - time.time()))
                 result = {"status": "rate_limited", "message": f"Cooling down for {remaining}s after OKX API 429"}
                 self._record_event("cycle_rate_limited", result)
                 return result
-            if self._probe_allowed():
-                probe_token = next((item for item in self.target_tokens if item.symbol == self.config.idle_probe_token), self.target_tokens[0])
-                probe_execution = self._execute_roundtrip(probe_token, self.config.idle_probe_amount_usd, label="probe")
-                probe_opportunity = {
-                    "token": probe_token.symbol,
-                    "buy_dex": "aggregator",
-                    "sell_dex": "aggregator",
-                }
-                self._update_stats(probe_opportunity, probe_execution)
-                outcome = {"opportunity": probe_opportunity, "execution": probe_execution}
-                self._record_event("cycle_probe", outcome)
-                return outcome
             result = {"status": "idle", "message": "No opportunity above thresholds"}
             self._record_event("cycle_idle", result)
             return result
