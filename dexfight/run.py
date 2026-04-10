@@ -64,8 +64,8 @@ class FlashArbConfig:
     rpc_url: str = "https://rpc.xlayer.com"
     base_token: str = "auto"
     base_token_candidates: List[str] = field(default_factory=lambda: ["USDT0", "USDC", "USDT"])
-    target_tokens: List[str] = field(default_factory=lambda: ["USDC", "DAI", "CRVUSD", "OKB", "WBTC"])
-    dex_names: List[str] = field(default_factory=lambda: ["curve", "okie-stable", "uniswap-v3", "quickswap-v3", "revoswap-v3"])
+    target_tokens: List[str] = field(default_factory=lambda: ["OKB", "USDC", "WBTC"])
+    dex_names: List[str] = field(default_factory=lambda: ["uniswap", "quickswap", "revoswap", "okie"])
     trade_amount: Decimal = Decimal("5")
     min_profit_usd: Decimal = Decimal("0.05")
     min_spread_pct: Decimal = Decimal("0.30")
@@ -79,6 +79,7 @@ class FlashArbConfig:
     idle_probe_amount_usd: Decimal = Decimal("0.30")
     idle_probe_interval: int = 900
     idle_probe_token: str = "OKB"
+    rate_limit_cooldown_sec: int = 180
     single_route_only: bool = True
     single_pool_per_hop: bool = True
     gas_limit_multiplier: Decimal = Decimal("1.30")
@@ -91,8 +92,8 @@ class FlashArbConfig:
 
     @classmethod
     def from_env(cls, live: bool = False) -> "FlashArbConfig":
-        tokens = [item.strip() for item in os.getenv("FLASHARB_TOKENS", "USDC,DAI,CRVUSD,OKB,WBTC").split(",") if item.strip()]
-        dexes = [item.strip() for item in os.getenv("FLASHARB_DEXES", "curve,okie-stable,uniswap-v3,quickswap-v3,revoswap-v3").split(",") if item.strip()]
+        tokens = [item.strip() for item in os.getenv("FLASHARB_TOKENS", "OKB,USDC,WBTC").split(",") if item.strip()]
+        dexes = [item.strip() for item in os.getenv("FLASHARB_DEXES", "uniswap,quickswap,revoswap,okie").split(",") if item.strip()]
         base_candidates = [
             item.strip() for item in os.getenv("FLASHARB_BASE_TOKENS", os.getenv("FLASHARB_BASE_TOKEN", "USDT0,USDC,USDT")).split(",") if item.strip()
         ]
@@ -118,6 +119,7 @@ class FlashArbConfig:
             idle_probe_amount_usd=Decimal(os.getenv("FLASHARB_IDLE_PROBE_AMOUNT_USD", "0.30")),
             idle_probe_interval=int(os.getenv("FLASHARB_IDLE_PROBE_INTERVAL", "900")),
             idle_probe_token=os.getenv("FLASHARB_IDLE_PROBE_TOKEN", "OKB"),
+            rate_limit_cooldown_sec=int(os.getenv("FLASHARB_RATE_LIMIT_COOLDOWN_SEC", "180")),
             single_route_only=os.getenv("FLASHARB_SINGLE_ROUTE_ONLY", "true").lower() == "true",
             single_pool_per_hop=os.getenv("FLASHARB_SINGLE_POOL_PER_HOP", "true").lower() == "true",
             gas_limit_multiplier=Decimal(os.getenv("FLASHARB_GAS_LIMIT_MULTIPLIER", "1.30")),
@@ -144,6 +146,7 @@ class FlashArbBot:
         self.dex_map: Dict[str, str] = {}
         self.last_post_at = 0.0
         self.last_probe_at = 0.0
+        self.rate_limited_until = 0.0
         self.recent_trade_times: List[float] = []
         self.event_log_path = config.log_dir / "flasharb_events.jsonl"
         self.state = {
@@ -289,6 +292,10 @@ class FlashArbBot:
         }
         with self.event_log_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(event, ensure_ascii=True) + "\n")
+
+    def _is_rate_limited_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "429" in message or "rate limit" in message or "too many requests" in message
 
     def _trim_recent(self) -> None:
         cutoff = time.time() - 3600
@@ -464,6 +471,13 @@ class FlashArbBot:
                     buy_quote = self._quote(base_amount, self.base_token, token, buy_id)
                 except Exception as exc:
                     self._record_event("quote_error", {"token": token.symbol, "dex": buy_name, "side": "buy", "error": str(exc)})
+                    if self._is_rate_limited_error(exc):
+                        self.rate_limited_until = time.time() + self.config.rate_limit_cooldown_sec
+                        self._record_event(
+                            "quote_rate_limited",
+                            {"cooldown_sec": self.config.rate_limit_cooldown_sec, "token": token.symbol, "dex": buy_name, "side": "buy"},
+                        )
+                        return None
                     continue
 
                 buy_out = buy_quote.get("toTokenAmount")
@@ -477,6 +491,13 @@ class FlashArbBot:
                         sell_quote = self._quote(str(buy_out), token, self.base_token, sell_id)
                     except Exception as exc:
                         self._record_event("quote_error", {"token": token.symbol, "dex": sell_name, "side": "sell", "error": str(exc)})
+                        if self._is_rate_limited_error(exc):
+                            self.rate_limited_until = time.time() + self.config.rate_limit_cooldown_sec
+                            self._record_event(
+                                "quote_rate_limited",
+                                {"cooldown_sec": self.config.rate_limit_cooldown_sec, "token": token.symbol, "dex": sell_name, "side": "sell"},
+                            )
+                            return None
                         continue
 
                     final_base = self.client.from_base_units(sell_quote["toTokenAmount"], self.base_token.decimals)
@@ -678,8 +699,18 @@ class FlashArbBot:
 
     def run_cycle(self) -> Dict[str, Any]:
         self.state["cycles"] += 1
+        if time.time() < self.rate_limited_until:
+            remaining = max(1, int(self.rate_limited_until - time.time()))
+            result = {"status": "rate_limited", "message": f"Cooling down for {remaining}s after OKX API 429"}
+            self._record_event("cycle_rate_limited", result)
+            return result
         opportunity = self.scan_best_opportunity()
         if not opportunity:
+            if time.time() < self.rate_limited_until:
+                remaining = max(1, int(self.rate_limited_until - time.time()))
+                result = {"status": "rate_limited", "message": f"Cooling down for {remaining}s after OKX API 429"}
+                self._record_event("cycle_rate_limited", result)
+                return result
             if self._probe_allowed():
                 probe_token = next((item for item in self.target_tokens if item.symbol == self.config.idle_probe_token), self.target_tokens[0])
                 probe_execution = self._execute_roundtrip(probe_token, self.config.idle_probe_amount_usd, label="probe")
@@ -724,7 +755,7 @@ class FlashArbBot:
     def print_result(self, outcome: Dict[str, Any]) -> None:
         execution = outcome.get("execution")
         if not execution:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] idle | no trade")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {outcome.get('status', 'idle')} | {outcome.get('message', 'no trade')}")
             return
         opportunity = outcome["opportunity"]
         estimated = opportunity.get("estimated_profit_usd", "n/a")

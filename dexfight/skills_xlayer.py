@@ -24,6 +24,7 @@ import requests
 API_BASE_URL = os.getenv("ONCHAINOS_API_BASE", "https://web3.okx.com").rstrip("/")
 DEFAULT_CHAIN_INDEX = os.getenv("ONCHAINOS_CHAIN_INDEX", os.getenv("CHAIN_ID", "196"))
 NATIVE_TOKEN_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+XLAYER_USDT0_ADDRESS = "0x779ded0c9e1022225f8e0630b35a9b54be713736"
 
 DEX_NAME_ALIASES = {
     "uniswap-v2": ("uniswap v2",),
@@ -198,20 +199,30 @@ class OKXSkillRunner:
             params={"chainIndex": chain_index or self.chain_index},
         )
         tokens: Dict[str, TokenInfo] = {}
+        effective_chain = str(chain_index or self.chain_index)
         for raw in data:
             symbol = str(raw.get("tokenSymbol", "")).upper()
             address = raw.get("tokenContractAddress", "")
             if not symbol or not address:
                 continue
+            canonical_symbol = symbol
+            if effective_chain == "196" and address.lower() == XLAYER_USDT0_ADDRESS:
+                canonical_symbol = "USD₮0"
             token = TokenInfo(
-                symbol=symbol,
+                symbol=canonical_symbol,
                 address=address,
                 decimals=int(raw.get("decimals", 18)),
                 name=raw.get("tokenName", ""),
                 logo_url=raw.get("tokenLogoUrl", ""),
             )
+            tokens[canonical_symbol] = token
+            tokens[normalize_token_symbol(canonical_symbol)] = token
             tokens[symbol] = token
             tokens[normalize_token_symbol(symbol)] = token
+            if effective_chain == "196" and address.lower() == XLAYER_USDT0_ADDRESS:
+                tokens["USDT"] = token
+                tokens["USDT0"] = token
+                tokens[normalize_token_symbol("USDT0")] = token
         self._token_cache = tokens
         return list({id(token): token for token in tokens.values()}.values())
 

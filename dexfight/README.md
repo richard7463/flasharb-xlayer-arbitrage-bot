@@ -24,15 +24,17 @@ The current runtime fixes the first two by moving scanning and execution onto th
 `run.py` now behaves like a real agent loop:
 1. Resolve supported X Layer tokens from Onchain OS
 2. Auto-select the strongest funded stable base asset, prioritizing `USD₮0 -> USDC -> USDT`
-3. Resolve available liquidity sources such as CurveNG, OkieStableSwap, Uniswap V3, QuickSwap V3, and Revoswap V3
+3. Resolve available liquidity sources such as Uniswap, QuickSwap, Revoswap, and Okie on X Layer
 4. Quote `stable -> token` on one DEX and `token -> stable` on another DEX
 5. Rank opportunities by estimated net profit after quote fees
 6. In `paper` mode: log and post results only
 7. In `live` mode:
    - `private-key` backend signs directly through RPC
    - `agentic` backend executes through `onchainos swap execute`
-8. If no spread clears thresholds, optional `idle probe` can still execute a tiny round-trip for tx proof and health checks
+8. If no spread clears thresholds, optional `idle probe` can still execute a tiny round-trip for tx proof and route health checks
 9. Post updates to Moltbook with recent tx hashes
+
+The X Layer stable at `0x779ded0c9e1022225f8e0630b35a9b54be713736` is treated as `USD₮0` in this repo even when some OKX endpoints label it as `USDT`.
 
 ## Install
 
@@ -61,11 +63,12 @@ RPC_URL=https://rpc.xlayer.com
 PRIVATE_KEY=0x... # only needed for private-key backend
 MOLTBOOK_API_KEY=...
 MOLTBOOK_PROXY=http://127.0.0.1:7890
-FLASHARB_TOKENS=USDC,DAI,CRVUSD,OKB,WBTC
-FLASHARB_DEXES=curve,okie-stable,uniswap-v3,quickswap-v3,revoswap-v3
+FLASHARB_TOKENS=OKB,USDC,WBTC
+FLASHARB_DEXES=uniswap,quickswap,revoswap,okie
 TRADE_AMOUNT_USD=1
 FLASHARB_MIN_PROFIT_USD=0.05
 FLASHARB_MIN_SPREAD_PCT=0.30
+FLASHARB_RATE_LIMIT_COOLDOWN_SEC=180
 FLASHARB_IDLE_PROBE_ENABLED=true
 FLASHARB_IDLE_PROBE_TOKEN=OKB
 FLASHARB_IDLE_PROBE_AMOUNT_USD=0.10
@@ -140,6 +143,7 @@ FlashArb should be positioned as a **Moltbook-native execution agent**, not just
 - it can execute through Agentic Wallet, which fits the hackathon's required onchain identity model
 - it persists an audit trail
 - it can post its own state back to Moltbook
+- it now backs off automatically after OKX API `429` responses instead of hammering the quote API
 
 For the hackathon, this makes it much stronger for `Most active agent` than the earlier mock version.
 
@@ -160,3 +164,4 @@ This is now execution-ready plumbing, but not yet a finished champion build:
 - it does not yet ingest Moltbook mentions as trading commands
 - it assumes your OKX API credentials, Agentic Wallet session, and token universe are valid on X Layer
 - the legacy `web3dex.py` path is still in the repo and should not be treated as the main runtime
+- with very small capital, most cycles will either idle or fall back to the optional probe path
