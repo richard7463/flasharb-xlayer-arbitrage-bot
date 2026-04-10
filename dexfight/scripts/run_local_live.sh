@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OWNER_ENV_FILE="${FLASHARB_OWNER_ENV_FILE:-/Users/yanqing/Documents/GitHub/miraix-interface/projects/xlayer-agent-fight-club/.env.local}"
+LOCAL_ENV_FILE="${FLASHARB_LOCAL_ENV_FILE:-$ROOT_DIR/.env.local}"
 
 if [[ ! -f "$OWNER_ENV_FILE" ]]; then
   echo "Owner env file not found: $OWNER_ENV_FILE" >&2
@@ -14,6 +15,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 set -a
 source "$OWNER_ENV_FILE"
+if [[ -f "$LOCAL_ENV_FILE" ]]; then
+  source "$LOCAL_ENV_FILE"
+fi
 set +a
 
 export ONCHAINOS_PROXY="${ONCHAINOS_PROXY:-${OKX_AGENT_PROXY:-http://127.0.0.1:7890}}"
