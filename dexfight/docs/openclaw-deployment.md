@@ -46,21 +46,21 @@ FLASHARB_EXECUTION_BACKEND=agentic
 FLASHARB_MODE=live
 FLASHARB_BASE_TOKEN=auto
 FLASHARB_BASE_TOKENS=USDT0,USDC,USDT
-FLASHARB_TOKENS=OKB,USDC,WBTC
-FLASHARB_DEXES=uniswap,quickswap,revoswap,okie
-TRADE_AMOUNT_USD=1
+FLASHARB_TOKENS=OKB
+FLASHARB_DEXES=uniswap,quickswap
+TRADE_AMOUNT_USD=0.50
 FLASHARB_MIN_PROFIT_USD=0.05
 FLASHARB_MIN_SPREAD_PCT=0.30
 FLASHARB_MAX_PRICE_IMPACT_PCT=2.00
 FLASHARB_SLIPPAGE_PERCENT=0.50
-FLASHARB_MAX_TRADES_PER_HOUR=10
-FLASHARB_MAX_DAILY_LOSS_USD=20
+FLASHARB_MAX_TRADES_PER_HOUR=6
+FLASHARB_MAX_DAILY_LOSS_USD=5
 FLASHARB_RATE_LIMIT_COOLDOWN_SEC=180
 FLASHARB_IDLE_PROBE_ENABLED=true
 FLASHARB_IDLE_PROBE_TOKEN=OKB
-FLASHARB_IDLE_PROBE_AMOUNT_USD=0.10
+FLASHARB_IDLE_PROBE_AMOUNT_USD=0.05
 FLASHARB_IDLE_PROBE_INTERVAL=900
-CHECK_INTERVAL=45
+CHECK_INTERVAL=300
 FLASHARB_LOG_DIR=logs
 FLASHARB_REPO_URL=https://github.com/richard7463/flasharb-xlayer-arbitrage-bot
 
@@ -71,7 +71,7 @@ MOLTBOOK_API_KEY=...
 MOLTBOOK_PROXY=http://127.0.0.1:7890
 MOLTBOOK_SUBMOLT=buildx
 MOLTBOOK_MOCK_MODE=false
-MOLTBOOK_POST_INTERVAL=180
+MOLTBOOK_POST_INTERVAL=900
 ```
 
 ## Install OnchainOS CLI
@@ -160,6 +160,25 @@ OpenClaw should confirm:
 6. no duplicate `--once` posts causing Moltbook `429` rate-limit errors
 7. `idle probe` only triggers when no profitable spread exists, and still records both tx hashes
 
+## Recommended Prize Mode
+
+Use this narrower config for the agent-track prize run:
+
+- only scan `OKB`
+- only scan `uniswap,quickswap`
+- keep the real arbitrage leg small with `TRADE_AMOUNT_USD=0.50`
+- keep proof probes smaller with `FLASHARB_IDLE_PROBE_AMOUNT_USD=0.05`
+- scan every `300s`
+- post every `900s`
+- cap total losses with `FLASHARB_MAX_DAILY_LOSS_USD=5`
+
+This configuration is not optimized for per-trade profit. It is optimized for:
+
+1. lower quote pressure on OKX
+2. lower probe loss per round-trip
+3. sustained real tx cadence
+4. sustained Moltbook posting cadence
+
 ## OpenClaw Prompt
 
-> Deploy `FlashArb` from `https://github.com/richard7463/flasharb-xlayer-arbitrage-bot` on this server. Use the provided `.env`, install the Python dependencies, install the OnchainOS CLI and skills, verify the Agentic Wallet login, run `python run.py --once` as a smoke test, then install a `systemd` service that runs `python run.py --live` continuously. Confirm that the runtime uses `USD₮0` as the base asset when funded, scans `uniswap,quickswap,revoswap,okie`, backs off after OKX `429` responses, and verify Moltbook posting plus recent tx hashes in `logs/flasharb_events.jsonl`.
+> Deploy `FlashArb` from `https://github.com/richard7463/flasharb-xlayer-arbitrage-bot` on this server in low-loss prize mode. Use the provided `.env`, install the Python dependencies, install the OnchainOS CLI and skills, verify the Agentic Wallet login, run `python run.py --once` as a smoke test, then install a `systemd` service that runs `python run.py --live` continuously. Use `OKB` only, `uniswap,quickswap` only, `TRADE_AMOUNT_USD=0.50`, `FLASHARB_IDLE_PROBE_AMOUNT_USD=0.05`, `CHECK_INTERVAL=300`, `MOLTBOOK_POST_INTERVAL=900`, and verify real tx hashes plus Moltbook posts in `logs/flasharb_events.jsonl`.
