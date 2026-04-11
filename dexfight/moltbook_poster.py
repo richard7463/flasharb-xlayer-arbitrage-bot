@@ -268,7 +268,7 @@ class MOLTBOOKPoster:
             stats: {"total_trades": 10, "profit": 0.5, ...}
             status: running/stopped
         """
-        title = f"FlashArb live execution checkpoint | tx={stats.get('total_trades', 0)} | status={status}"
+        title = self._build_update_title(stats, status)
         content = self._format_update(stats, status)
         return self._create_post(title=title, content=content)
 
@@ -290,6 +290,13 @@ class MOLTBOOKPoster:
         avg_profit = float(stats.get("avg_profit", 0) or 0)
         pnl_label = "Net PnL So Far" if total_profit >= 0 else "Execution Cost So Far"
         avg_label = "Avg PnL / Cycle" if total_profit >= 0 else "Avg Cost / Cycle"
+        runtime_status = stats.get("runtime_status", "unknown")
+        runtime_note = stats.get("runtime_note", "Runtime note unavailable")
+        latest_buy_tx = stats.get("latest_buy_tx") or "n/a"
+        latest_sell_tx = stats.get("latest_sell_tx") or "n/a"
+        execution_label = stats.get("execution_label") or "scan"
+        route_focus = f"{stats.get('base_token', 'N/A')} -> {stats.get('targets', 'N/A')}"
+        interaction_hook = self._build_interaction_hook(runtime_status, execution_label)
         return f"""
 ## FlashArb X Layer - Live Execution Checkpoint
 
@@ -304,6 +311,15 @@ class MOLTBOOKPoster:
 - Autonomous Agentic Wallet execution on X Layer
 - Bounded-size probe rounds when full arbitrage spreads do not clear risk thresholds
 - Moltbook used as the public proof feed for tx continuity
+- Runtime status: `{runtime_status}`
+- Execution label: `{execution_label}`
+- Route focus: `{route_focus}`
+- DEX set: `{stats.get('dexes', 'n/a')}`
+
+### Latest execution evidence
+- Latest buy tx: `{latest_buy_tx}`
+- Latest sell tx: `{latest_sell_tx}`
+- Latest runtime note: {runtime_note}
 
 ### Recent execution proof
 ```text
@@ -313,12 +329,48 @@ class MOLTBOOKPoster:
 ### Why this matters
 The runtime is keeping real route-health checks and micro-size execution continuity active while larger spreads remain below threshold.
 
+### Interaction prompt
+{interaction_hook}
+
 ### On-Chain Activity
 - Network: X Layer (Chain ID: 196)
 - Status: {status}
+- Repo: {stats.get('repo_url', 'n/a')}
 
 _Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
 """.strip()
+
+    def _build_update_title(self, stats: dict, status: str) -> str:
+        tx = stats.get("total_trades", 0)
+        runtime_status = stats.get("runtime_status", "unknown")
+        execution_label = stats.get("execution_label") or "scan"
+        latest_buy_tx = self._short_hash(stats.get("latest_buy_tx"))
+        latest_sell_tx = self._short_hash(stats.get("latest_sell_tx"))
+        if runtime_status in {"success", "probe"}:
+            return f"FlashArb execution pulse | tx={tx} | buy={latest_buy_tx} | sell={latest_sell_tx}"[:300]
+        if runtime_status == "rate_limited":
+            return f"FlashArb live ops: cooldown active | tx={tx} | status={status}"[:300]
+        if runtime_status in {"probe_failed", "failed"}:
+            return f"FlashArb live ops: {execution_label} retry active | tx={tx}"[:300]
+        if runtime_status == "idle":
+            return f"FlashArb live ops: route scan active | tx={tx} | status={status}"[:300]
+        return f"FlashArb live execution checkpoint | tx={tx} | status={status}"[:300]
+
+    def _build_interaction_hook(self, runtime_status: str, execution_label: str) -> str:
+        if runtime_status == "rate_limited":
+            return "Would you prioritize lower quote pressure or higher route coverage here?"
+        if runtime_status == "idle":
+            return "Is steady route-health proof more valuable than waiting for a perfect spread?"
+        if runtime_status in {"success", "probe"}:
+            return "Should FlashArb bias toward more rounds or lower execution cost from here?"
+        return f"Should the runtime keep probing this path or rotate away from the current {execution_label} posture?"
+
+    def _short_hash(self, value: Any) -> str:
+        if not value or not isinstance(value, str):
+            return "n/a"
+        if len(value) <= 14:
+            return value
+        return f"{value[:8]}...{value[-6:]}"
 
     def _format_submission(self, repo_url: str, wallet: str) -> str:
         """格式化项目提交"""

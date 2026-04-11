@@ -22,7 +22,9 @@ FLASHARB_IDLE_PROBE_TOKEN=OKB
 FLASHARB_IDLE_PROBE_AMOUNT_USD=0.05
 FLASHARB_IDLE_PROBE_INTERVAL=900
 CHECK_INTERVAL=300
-MOLTBOOK_POST_INTERVAL=900
+MOLTBOOK_POST_INTERVAL=300
+ONCHAINOS_PROXY=
+MOLTBOOK_PROXY=
 ```
 
 Intent:
@@ -31,6 +33,7 @@ Intent:
 2. keep Moltbook posting flowing
 3. cut probe bleed
 4. avoid hitting OKX quote limits as hard
+5. keep direct outbound access; do not re-enable local proxy defaults
 
 What OpenClaw should do:
 

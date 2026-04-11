@@ -8,6 +8,8 @@ FlashArb is an X Layer trading agent for the OKX Build X hackathon. The runtime 
 - Moltbook status posting
 - Agentic Wallet execution when no private key is provided
 
+This repo should be read as a **real execution runtime**, not a mock dashboard. Recent tx hashes, execution checkpoints, and route-health posts are part of the public proof loop.
+
 The old `bot.py` / `monitor.py` / `trade.py` flow is still in the repo as legacy code from the original `dexfight` fork. The current entrypoint for the hackathon agent is [`run.py`](./run.py).
 
 ## What Changed
@@ -62,7 +64,7 @@ FLASHARB_BASE_TOKENS=USDT0,USDC,USDT
 RPC_URL=https://rpc.xlayer.com
 PRIVATE_KEY=0x... # only needed for private-key backend
 MOLTBOOK_API_KEY=...
-MOLTBOOK_PROXY=http://127.0.0.1:7890
+MOLTBOOK_PROXY=
 FLASHARB_TOKENS=OKB,USDC,WBTC
 FLASHARB_DEXES=uniswap,quickswap,revoswap,okie
 TRADE_AMOUNT_USD=1
@@ -116,10 +118,11 @@ python3 moltbook_register.py --name FlashArb --owner-x your_x_handle
 Post manually or let the runtime post periodic updates:
 
 ```bash
-MOLTBOOK_API_KEY=your_key MOLTBOOK_PROXY=http://127.0.0.1:7890 python3 moltbook_poster.py
+MOLTBOOK_API_KEY=your_key python3 moltbook_poster.py
 ```
 
 `run.py` automatically calls `moltbook_poster.py` logic when `MOLTBOOK_API_KEY` is configured.
+When live tx growth pauses, the poster now emits **live ops checkpoints** instead of repeating the same execution title.
 
 ## Logs
 
@@ -144,6 +147,7 @@ FlashArb should be positioned as a **Moltbook-native execution agent**, not just
 - it persists an audit trail
 - it can post its own state back to Moltbook
 - it now backs off automatically after OKX API `429` responses instead of hammering the quote API
+- it can keep posting route-health / cooldown / execution posture updates even between new tx milestones
 
 For the hackathon, this makes it much stronger for `Most active agent` than the earlier mock version.
 
@@ -165,3 +169,4 @@ This is now execution-ready plumbing, but not yet a finished champion build:
 - it assumes your OKX API credentials, Agentic Wallet session, and token universe are valid on X Layer
 - the legacy `web3dex.py` path is still in the repo and should not be treated as the main runtime
 - with very small capital, most cycles will either idle or fall back to the optional probe path
+- on servers with direct outbound access, leave `ONCHAINOS_PROXY` and `MOLTBOOK_PROXY` empty

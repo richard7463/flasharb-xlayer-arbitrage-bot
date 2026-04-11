@@ -162,6 +162,11 @@ class FlashArbBot:
             "total_profit": Decimal("0"),
             "daily_realized_profit": Decimal("0"),
             "recent": [],
+            "last_runtime_status": "booting",
+            "last_runtime_note": "Runtime initialized",
+            "last_buy_tx_hash": None,
+            "last_sell_tx_hash": None,
+            "last_execution_label": None,
         }
         self.config.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -694,6 +699,10 @@ class FlashArbBot:
             return
         self.state["total_trades"] += 1
         profit = Decimal(str(execution.get("profit_usd", "0")))
+        self.state["last_runtime_status"] = execution.get("status", "unknown")
+        self.state["last_execution_label"] = execution.get("label")
+        self.state["last_buy_tx_hash"] = execution.get("buy_tx_hash")
+        self.state["last_sell_tx_hash"] = execution.get("sell_tx_hash")
         if execution.get("status") in {"success", "paper", "probe"}:
             self.state["successful"] += 1
             self.state["total_profit"] += profit
@@ -707,6 +716,7 @@ class FlashArbBot:
             f"buy={execution.get('buy_tx_hash')} sell={execution.get('sell_tx_hash')}"
         )
         self.state["recent"] = (self.state["recent"] + [recent_line])[-8:]
+        self.state["last_runtime_note"] = recent_line
 
     def _maybe_post_update(self, force: bool = False) -> None:
         if not self.poster:
@@ -722,6 +732,14 @@ class FlashArbBot:
             "total_profit": float(self.state["total_profit"]),
             "avg_profit": float(self.state["total_profit"] / max(1, self.state["successful"])),
             "recent": "\n".join(self.state["recent"][-5:]) or "No trades yet",
+            "runtime_status": self.state["last_runtime_status"],
+            "runtime_note": self.state["last_runtime_note"],
+            "latest_buy_tx": self.state["last_buy_tx_hash"],
+            "latest_sell_tx": self.state["last_sell_tx_hash"],
+            "execution_label": self.state["last_execution_label"],
+            "targets": ",".join(token.symbol for token in self.target_tokens),
+            "dexes": ",".join(self.dex_map.keys()),
+            "repo_url": self.config.repo_url,
         }
         result = self.poster.post_update(stats, status=self.config.mode)
         self._record_event("moltbook_post", result)
@@ -740,6 +758,8 @@ class FlashArbBot:
         except Exception as exc:
             probe_execution = {"status": "failed", "error": str(exc), "profit_usd": "0", "label": "probe"}
             self._record_event("cycle_probe_error", {"opportunity": probe_opportunity, "error": str(exc)})
+            self.state["last_runtime_status"] = "probe_failed"
+            self.state["last_runtime_note"] = str(exc)
         self._update_stats(probe_opportunity, probe_execution)
         outcome = {"opportunity": probe_opportunity, "execution": probe_execution}
         self._record_event("cycle_probe", outcome)
@@ -752,6 +772,8 @@ class FlashArbBot:
                 return self._run_probe_cycle(reason="rate_limited_cooldown")
             remaining = max(1, int(self.rate_limited_until - time.time()))
             result = {"status": "rate_limited", "message": f"Cooling down for {remaining}s after OKX API 429"}
+            self.state["last_runtime_status"] = "rate_limited"
+            self.state["last_runtime_note"] = result["message"]
             self._record_event("cycle_rate_limited", result)
             return result
         opportunity = self.scan_best_opportunity()
@@ -762,9 +784,13 @@ class FlashArbBot:
             if time.time() < self.rate_limited_until:
                 remaining = max(1, int(self.rate_limited_until - time.time()))
                 result = {"status": "rate_limited", "message": f"Cooling down for {remaining}s after OKX API 429"}
+                self.state["last_runtime_status"] = "rate_limited"
+                self.state["last_runtime_note"] = result["message"]
                 self._record_event("cycle_rate_limited", result)
                 return result
             result = {"status": "idle", "message": "No opportunity above thresholds"}
+            self.state["last_runtime_status"] = "idle"
+            self.state["last_runtime_note"] = result["message"]
             self._record_event("cycle_idle", result)
             return result
 
